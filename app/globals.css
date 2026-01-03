@@ -1,0 +1,22 @@
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --card-bg: #171717;
+  --primary: #3b82f6;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --border: #262626;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}

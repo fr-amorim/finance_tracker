@@ -1,0 +1,6 @@
+.next
+node_modules
+.docker
+out
+.env.local
+.DS_Store
