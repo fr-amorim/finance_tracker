@@ -48,9 +48,18 @@ async function getAssetData(ticker: string, period1Str: string) {
 
     console.log(`[${new Date().toISOString()}] DB CACHE MISS/STALE for: ${ticker}. Fetching from Yahoo...`);
 
-    // 3. Fetch from Yahoo
+    // 3. Determine actual period1 for "incremental fetch"
+    // If we have data, start from the latest date we have to get missing days.
+    let fetchStart = period1Str;
+    if (dbData.length > 0) {
+        const lastDate = dbData[dbData.length - 1].date;
+        fetchStart = lastDate.toISOString().split('T')[0];
+        console.log(`[${new Date().toISOString()}] Incremental fetch for ${ticker} starting at ${fetchStart}`);
+    }
+
+    // 4. Fetch from Yahoo
     const queryOptions = {
-        period1: period1Str,
+        period1: fetchStart,
         interval: '1d' as any,
     };
 
@@ -59,7 +68,7 @@ async function getAssetData(ticker: string, period1Str: string) {
         const quotes = chartResult.quotes || [];
         const currency = chartResult.meta?.currency || 'USD';
 
-        // 4. Save data to DB
+        // 5. Save data to DB
         const validQuotes = quotes.filter((q: any) => q.date && q.close !== null);
 
         if (validQuotes.length > 0) {
@@ -81,19 +90,41 @@ async function getAssetData(ticker: string, period1Str: string) {
             });
         }
 
-        // 5. Update registry to mark as "checked today"
+        // 6. Update registry to mark as "checked today"
         await prisma.syncRegistry.upsert({
             where: { key: `asset_${ticker}` },
             update: { lastCheck: new Date() },
             create: { key: `asset_${ticker}`, lastCheck: new Date() }
         });
 
-        return quotes;
+        // After saving, we should return the FULL set from DB to ensure frontend has everything
+        const fullData = await prisma.assetPrice.findMany({
+            where: { ticker, date: { gte: period1Date } },
+            orderBy: { date: 'asc' }
+        });
+
+        return fullData.map(d => ({
+            date: d.date,
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+            adjClose: d.adjClose,
+            volume: Number(d.volume),
+        }));
 
     } catch (e: any) {
         console.error(`[${new Date().toISOString()}] Error fetching/saving ${ticker}: ${e.message}`);
         // Fallback to whatever we have in DB
-        return dbData.length > 0 ? dbData : [];
+        return dbData.length > 0 ? dbData.map(d => ({
+            date: d.date,
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+            adjClose: d.adjClose,
+            volume: Number(d.volume),
+        })) : [];
     }
 }
 
@@ -120,10 +151,16 @@ async function getExchangeRateData(pair: string, period1Str: string) {
         return dbData;
     }
 
+    // Determine fetch start for incremental
+    let fetchStart = period1Str;
+    if (dbData.length > 0) {
+        fetchStart = dbData[dbData.length - 1].date.toISOString().split('T')[0];
+    }
+
     // Fetch
-    console.log(`[${new Date().toISOString()}] Fetching rate for ${pair}...`);
+    console.log(`[${new Date().toISOString()}] Fetching rate for ${pair} starting at ${fetchStart}...`);
     try {
-        const chartResult = await yahooFinance.chart(pair, { period1: period1Str, interval: '1d' as any });
+        const chartResult = await yahooFinance.chart(pair, { period1: fetchStart, interval: '1d' as any });
         const quotes = chartResult.quotes || [];
 
         const validQuotes = quotes.filter((q: any) => q.date && q.close !== null);
@@ -147,10 +184,11 @@ async function getExchangeRateData(pair: string, period1Str: string) {
             create: { key: `rate_${pair}`, lastCheck: new Date() }
         });
 
-        return validQuotes.map((q: any) => ({
-            date: new Date(q.date),
-            close: q.close
-        }));
+        // Return full set
+        return prisma.exchangeRate.findMany({
+            where: { pair, date: { gte: period1Date } },
+            orderBy: { date: 'asc' }
+        });
 
     } catch (error) {
         console.error(`[${new Date().toISOString()}] Rate fetch error ${pair}`, error);
