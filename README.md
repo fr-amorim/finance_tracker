@@ -79,6 +79,25 @@ The easiest way to view and edit your data.
 
 ---
 
+## 📥 Bulk Transaction Import
+
+You can now import transactions in bulk using an Excel (`.xlsx`, `.xls`) or CSV file.
+
+### Expected File Structure
+The file should have the following headers (case-insensitive):
+
+| Column | Description | Mandatory |
+| :--- | :--- | :--- |
+| **Ticker** | Asset symbol (e.g., `AAPL`, `BTC-USD`) | Yes |
+| **Type** | `BUY` or `SELL` | Yes |
+| **Quantity** | Number of units purchased/sold | Yes |
+| **Date** | Transaction date (YYYY-MM-DD) | No (defaults to earliest price) |
+| **Class** | Asset category (e.g., `Stocks`, `Crypto`) | No |
+
+An example file `example_import.csv` is provided in the root directory.
+
+---
+
 ## 🛠️ Architecture Notes
 
 - **Caching Strategy**: The app uses a `SyncRegistry` table to track the last successful API check. Markets are only queried once per day per ticker.

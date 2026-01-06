@@ -11,6 +11,8 @@ interface ChartProps {
     onAllocationUpdate?: (allocations: Record<string, number>) => void;
     selectedClass: string;
     onClassChange: (value: string) => void;
+    preloadedData?: { results: any[], portfolioSeries: any[] };
+    transactions?: any[];
 }
 
 export default function Chart({
@@ -19,7 +21,9 @@ export default function Chart({
     availableClasses = [],
     onAllocationUpdate,
     selectedClass,
-    onClassChange
+    onClassChange,
+    preloadedData,
+    transactions = []
 }: ChartProps) {
     const [rawResults, setRawResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
@@ -28,6 +32,27 @@ export default function Chart({
     const [view, setView] = useState<'performance' | 'allocation' | 'evolution' | 'yield'>('performance');
     const [yieldStartDate, setYieldStartDate] = useState<string>('');
     const [hiddenTickers, setHiddenTickers] = useState<Set<string>>(new Set());
+    const [timeWindow, setTimeWindow] = useState('ALL');
+
+    const filterStartDate = useMemo(() => {
+        if (timeWindow === 'ALL') return null;
+        const now = new Date();
+        const start = new Date();
+        switch (timeWindow) {
+            case '5D': start.setDate(now.getDate() - 5); break;
+            case '1M': start.setMonth(now.getMonth() - 1); break;
+            case '3M': start.setMonth(now.getMonth() - 3); break;
+            case '6M': start.setMonth(now.getMonth() - 6); break;
+            case 'YTD':
+                start.setFullYear(now.getFullYear(), 0, 1);
+                start.setHours(0, 0, 0, 0);
+                break;
+            case '1A': start.setFullYear(now.getFullYear() - 1); break;
+            case '5A': start.setFullYear(now.getFullYear() - 5); break;
+            default: return null;
+        }
+        return start.toISOString().split('T')[0];
+    }, [timeWindow]);
 
     const filteredIndices = useMemo(() => {
         const target = selectedClass.toLowerCase();
@@ -37,11 +62,29 @@ export default function Chart({
         );
     }, [indices, selectedClass]);
 
-    // Only show classes that are actually used in the current indices
+    // Help map tickers to classes (including those fully sold)
+    const tickerToClass = useMemo(() => {
+        const map: Record<string, string> = {};
+        transactions.forEach(tx => {
+            if (tx.ticker && tx.assetClass) map[tx.ticker] = tx.assetClass;
+        });
+        indices.forEach(idx => {
+            if (idx.ticker && idx.class) map[idx.ticker] = idx.class;
+        });
+        return map;
+    }, [transactions, indices]);
+
     const usedClasses = useMemo(() => {
-        const classes = new Set(indices.map(i => i.class).filter(Boolean));
-        return Array.from(classes).sort() as string[];
-    }, [indices]);
+        const classes = new Set<string>();
+        // Use provided classes
+        availableClasses.forEach(c => classes.add(c));
+        // Add classes from current indices
+        indices.forEach(i => { if (i.class) classes.add(i.class); });
+        // Add classes from transactions
+        transactions.forEach(t => { if (t.assetClass) classes.add(t.assetClass); });
+
+        return Array.from(classes).sort();
+    }, [availableClasses, indices, transactions]);
 
     const toggleTicker = (ticker: string) => {
         setHiddenTickers(prev => {
@@ -53,6 +96,11 @@ export default function Chart({
     };
 
     useEffect(() => {
+        if (preloadedData) {
+            setRawResults(preloadedData.results || []);
+            return;
+        }
+
         if (indices.length === 0) {
             setTickerErrors([]);
             setRawResults([]);
@@ -87,9 +135,46 @@ export default function Chart({
         };
 
         fetchData();
-    }, [indices, currency]);
+    }, [indices, currency, preloadedData]);
 
     const processedData = useMemo(() => {
+        // Use preloaded series if available (Transaction Mode)
+        if (preloadedData && preloadedData.portfolioSeries) {
+            const target = selectedClass.toLowerCase();
+
+            const filteredSeries = preloadedData.portfolioSeries.map(day => {
+                if (target === 'all') return day;
+
+                let classTotal = 0;
+                const newDay: any = { date: day.date };
+
+                // Copy over individual ticker values if they belong to the selected class
+                // Identify tickers from the keys of the day object (excluding date and value)
+                Object.keys(day).forEach(key => {
+                    if (key === 'date' || key === 'value') return;
+
+                    const tickerClass = (tickerToClass[key] || 'Stocks').toLowerCase();
+                    if (tickerClass === target) {
+                        newDay[key] = day[key];
+                        classTotal += day[key];
+                    }
+                });
+
+                newDay.value = classTotal;
+                return newDay;
+            }).filter(day => {
+                const isClassValid = target === 'all' || (day.value && day.value > 0);
+                if (!isClassValid) return false;
+                if (filterStartDate && day.date < filterStartDate) return false;
+                return true;
+            });
+
+            return {
+                chartData: filteredSeries,
+                evolutionData: filteredSeries
+            };
+        }
+
         if (!rawResults.length || filteredIndices.length === 0) return { chartData: [], evolutionData: [] };
 
         // 1. Collect all unique dates across all valid tickers in the current filter
@@ -142,14 +227,16 @@ export default function Chart({
             });
         });
 
-        return {
-            chartData: sortedDates.map(date => ({ date, value: aggregated[date] })),
-            evolutionData: sortedDates.map(date => stacked[date])
-        };
-    }, [rawResults, filteredIndices]);
+        const finalDates = filterStartDate ? sortedDates.filter(d => d >= filterStartDate) : sortedDates;
 
-    const data = processedData.chartData;
-    const evolutionData = processedData.evolutionData;
+        return {
+            chartData: finalDates.map(date => ({ date, value: aggregated[date] })),
+            evolutionData: finalDates.map(date => stacked[date])
+        };
+    }, [rawResults, filteredIndices, preloadedData, filterStartDate, selectedClass, tickerToClass]);
+
+    const data = processedData?.chartData || [];
+    const evolutionData = processedData?.evolutionData || [];
 
     const yieldDataProcessed = useMemo(() => {
         if (!rawResults.length) return [];
@@ -165,8 +252,11 @@ export default function Chart({
             new Date(a).getTime() - new Date(b).getTime()
         );
 
-        // 2. Filter dates to start from the requested start date (or earliest)
-        const plotStartDate = yieldStartDate || sortedDates[0];
+        // 2. Filter dates based on time window or yieldStartDate
+        let plotStartDate = yieldStartDate || sortedDates[0];
+        if (filterStartDate && (!yieldStartDate || filterStartDate > yieldStartDate)) {
+            plotStartDate = filterStartDate;
+        }
         const plotDates = sortedDates.filter(d => d >= plotStartDate);
 
         if (plotDates.length === 0) return [];
@@ -220,7 +310,7 @@ export default function Chart({
         });
 
         return Object.values(resultsByDate);
-    }, [rawResults, yieldStartDate]);
+    }, [rawResults, yieldStartDate, filterStartDate]);
 
     const metrics = useMemo(() => {
         if (data.length === 0) return null;
@@ -364,6 +454,93 @@ export default function Chart({
             </div>
         );
     }
+    // Custom Tooltip for Transactions
+    const CustomTooltip = ({ active, payload, label }: any) => {
+        if (active && payload && payload.length) {
+            const date = label;
+            const target = selectedClass.toLowerCase();
+            const dailyTransactions = transactions.filter(t => {
+                const isMatch = t.date.split('T')[0] === date;
+                if (target !== 'all' && isMatch) {
+                    return t.assetClass && t.assetClass.toLowerCase() === target;
+                }
+                return isMatch;
+            });
+
+            return (
+                <div className={styles.customTooltip}>
+                    <p className={styles.tooltipDate}>{new Date(date).toLocaleDateString()}</p>
+                    {payload.map((p: any, i: number) => (
+                        <div key={i} className={styles.tooltipValue} style={{ color: p.color || p.fill }}>
+                            <span>{p.name}: {view === 'yield' ? `${p.value.toFixed(2)}%` : formatCurrency(p.value)}</span>
+                        </div>
+                    ))}
+                    {dailyTransactions.length > 0 && (
+                        <div className={styles.tooltipTransactions}>
+                            <div className={styles.txHeader}>Transactions:</div>
+                            {dailyTransactions.map((tx, idx) => (
+                                <div key={idx} className={styles.txRow}>
+                                    <span className={tx.type === 'BUY' ? styles.buyText : styles.sellText}>
+                                        {tx.type}
+                                    </span>
+                                    <span className={styles.txInfo}>
+                                        {tx.quantity} {tx.ticker}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+        return null;
+    };
+
+    // Custom Dot for Transaction Events
+    const EventDot = (props: any) => {
+        const { cx, cy, payload } = props;
+        if (!payload || !payload.date) return null;
+
+        const date = payload.date;
+        const target = selectedClass.toLowerCase();
+        const ticker = props.dataKey; // Recharts passes dataKey to the dot component
+
+        const dailyTransactions = transactions.filter(t => {
+            const txDate = t.date.split('T')[0];
+            const isMatch = txDate === date;
+
+            // If ticker is provided (and not 'value'), filter by that ticker specifically
+            if (ticker && ticker !== 'value' && isMatch) {
+                return t.ticker === ticker;
+            }
+
+            if (target !== 'all' && isMatch) {
+                return t.assetClass && t.assetClass.toLowerCase() === target;
+            }
+            return isMatch;
+        });
+
+        if (dailyTransactions.length === 0) return null;
+
+        const isBuy = dailyTransactions.some(t => t.type === 'BUY');
+        const isSell = dailyTransactions.some(t => t.type === 'SELL');
+
+        let color = '#3b82f6'; // Mixed
+        if (isBuy && !isSell) color = '#22c55e';
+        if (isSell && !isBuy) color = '#ef4444';
+
+        return (
+            <circle
+                cx={cx}
+                cy={cy}
+                r={6}
+                fill={color}
+                stroke="#fff"
+                strokeWidth={2}
+                style={{ cursor: 'pointer', filter: 'drop-shadow(0 0 4px rgba(0,0,0,0.5))' }}
+            />
+        );
+    };
 
     return (
         <div className={styles.chartContainer}>
@@ -380,8 +557,7 @@ export default function Chart({
 
             <div className={styles.topControlsRow}>
                 <div className={styles.filterGroup}>
-                    <span className={styles.filterLabel}>Filter by Category:</span>
-                    <div className={styles.classPills}>
+                    <div className={styles.classPills} style={{ marginLeft: 'auto' }}>
                         <button
                             className={`${styles.pill} ${selectedClass === 'All' ? styles.activePill : ''}`}
                             onClick={() => onClassChange('All')}
@@ -434,32 +610,24 @@ export default function Chart({
             <div className={styles.headerRow}>
                 <div className={styles.headerTitleGroup}>
                     <h3>Portfolio Performance</h3>
+                    <div className={styles.viewToggle}>
+                        <button className={view === 'performance' ? styles.active : ''} onClick={() => setView('performance')}>Performance</button>
+                        <button className={view === 'evolution' ? styles.active : ''} onClick={() => setView('evolution')}>Composition</button>
+                        <button className={view === 'yield' ? styles.active : ''} onClick={() => setView('yield')}>Yield</button>
+                        <button className={view === 'allocation' ? styles.active : ''} onClick={() => setView('allocation')}>Allocation</button>
+                    </div>
                 </div>
-                <div className={styles.viewToggle}>
-                    <button
-                        className={view === 'performance' ? styles.active : ''}
-                        onClick={() => setView('performance')}
-                    >
-                        Performance
-                    </button>
-                    <button
-                        className={view === 'evolution' ? styles.active : ''}
-                        onClick={() => setView('evolution')}
-                    >
-                        Composition
-                    </button>
-                    <button
-                        className={view === 'allocation' ? styles.active : ''}
-                        onClick={() => setView('allocation')}
-                    >
-                        Allocation
-                    </button>
-                    <button
-                        className={view === 'yield' ? styles.active : ''}
-                        onClick={() => setView('yield')}
-                    >
-                        Yield
-                    </button>
+
+                <div className={styles.classPills} style={{ marginLeft: 'auto' }}>
+                    {['5D', '1M', '3M', '6M', 'YTD', '1A', '5A', 'ALL'].map(w => (
+                        <button
+                            key={w}
+                            className={`${styles.pill} ${timeWindow === w ? styles.activePill : ''}`}
+                            onClick={() => setTimeWindow(w)}
+                        >
+                            {w}
+                        </button>
+                    ))}
                 </div>
             </div>
 
@@ -490,11 +658,16 @@ export default function Chart({
                             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                             <XAxis dataKey="date" stroke="#666" fontSize={12} tickFormatter={(str) => str.substring(0, 4)} />
                             <YAxis stroke="#666" fontSize={12} tickFormatter={(val) => formatCurrency(val)} />
-                            <Tooltip
-                                contentStyle={{ backgroundColor: '#171717', border: '1px solid #333' }}
-                                formatter={(val: number) => [formatCurrency(val), 'Value']}
+                            <Tooltip content={<CustomTooltip />} />
+                            <Area
+                                type="monotone"
+                                dataKey="value"
+                                stroke="#3b82f6"
+                                fillOpacity={1}
+                                fill="url(#colorValue)"
+                                dot={<EventDot />}
+                                activeDot={{ r: 8 }}
                             />
-                            <Area type="monotone" dataKey="value" stroke="#3b82f6" fillOpacity={1} fill="url(#colorValue)" />
                         </AreaChart>
                     </ResponsiveContainer>
                 ) : view === 'evolution' ? (
@@ -503,10 +676,7 @@ export default function Chart({
                             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                             <XAxis dataKey="date" stroke="#666" fontSize={12} tickFormatter={(str) => str.substring(0, 4)} />
                             <YAxis stroke="#666" fontSize={12} tickFormatter={(val) => formatCurrency(val)} />
-                            <Tooltip
-                                contentStyle={{ backgroundColor: '#171717', border: '1px solid #333' }}
-                                formatter={(val: number) => formatCurrency(val)}
-                            />
+                            <Tooltip content={<CustomTooltip />} />
                             <Legend
                                 onClick={(e) => toggleTicker(e.dataKey as string)}
                                 wrapperStyle={{ paddingTop: '20px', cursor: 'pointer' }}
@@ -521,6 +691,7 @@ export default function Chart({
                                     stroke={['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1'][i % 7]}
                                     fill={['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1'][i % 7]}
                                     fillOpacity={0.6}
+                                    dot={<EventDot />}
                                 />
                             ))}
                         </AreaChart>
@@ -531,10 +702,7 @@ export default function Chart({
                             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                             <XAxis dataKey="date" stroke="#666" fontSize={12} tickFormatter={(str) => str.substring(0, 4)} />
                             <YAxis stroke="#666" fontSize={12} tickFormatter={(val) => `${val.toFixed(1)}%`} />
-                            <Tooltip
-                                contentStyle={{ backgroundColor: '#171717', border: '1px solid #333' }}
-                                formatter={(val: number) => [`${val.toFixed(2)}%`, 'Yield']}
-                            />
+                            <Tooltip content={<CustomTooltip />} />
                             <Legend
                                 onClick={(e) => toggleTicker(e.dataKey as string)}
                                 wrapperStyle={{ paddingTop: '20px', cursor: 'pointer' }}
@@ -547,7 +715,7 @@ export default function Chart({
                                     hide={hiddenTickers.has(idx.ticker)}
                                     stroke={['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1'][i % 7]}
                                     strokeWidth={2}
-                                    dot={false}
+                                    dot={<EventDot />}
                                 />
                             ))}
                         </LineChart>
@@ -556,6 +724,6 @@ export default function Chart({
                     <AllocationChart data={allocationData} currency={currency} />
                 )}
             </div>
-        </div>
+        </div >
     );
 }

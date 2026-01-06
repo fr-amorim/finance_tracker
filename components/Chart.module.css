@@ -169,3 +169,107 @@
     border-color: #3b82f6;
     background: rgba(0, 0, 0, 0.4);
 }
+
+.classFilterSelect {
+    padding: 6px 30px 6px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: #f3f4f6;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 14px;
+    transition: all 0.2s;
+}
+
+.classFilterSelect:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.classFilterSelect:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.classFilterSelect option {
+    background-color: #1a1a1a;
+    color: #f3f4f6;
+}
+
+/* Custom Tooltip Styles */
+.customTooltip {
+    background: rgba(20, 20, 20, 0.95);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 12px;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    min-width: 160px;
+}
+
+.tooltipDate {
+    margin: 0 0 8px 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 6px;
+}
+
+.tooltipValue {
+    font-size: 0.9rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.tooltipTransactions {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.txHeader {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #6b7280;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.txRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 0.8rem;
+}
+
+.txRow:last-child {
+    margin-bottom: 0;
+}
+
+.buyText {
+    color: #22c55e;
+    font-weight: 800;
+    font-size: 0.65rem;
+}
+
+.sellText {
+    color: #ef4444;
+    font-weight: 800;
+    font-size: 0.65rem;
+}
+
+.txInfo {
+    color: #f3f4f6;
+    font-weight: 500;
+}

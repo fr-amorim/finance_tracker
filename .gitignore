@@ -4,3 +4,5 @@ node_modules
 out
 .env.local
 .DS_Store
+personal_data
+example_import.csv

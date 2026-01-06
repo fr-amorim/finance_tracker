@@ -46,3 +46,25 @@ model SyncRegistry {
   key        String   @id // ticker or currency pair
   lastCheck  DateTime @updatedAt
 }
+
+model Portfolio {
+  id           String        @id
+  name         String
+  classes      String[]      @default(["Stocks", "Funds", "Crypto", "Etf"])
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+}
+
+model Transaction {
+  id          Int      @id @default(autoincrement())
+  portfolioId String
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id])
+  ticker      String
+  type        String   // "BUY" | "SELL"
+  assetClass  String?
+  quantity    Float
+  price       Float?
+  date        DateTime
+  createdAt   DateTime @default(now())
+}
